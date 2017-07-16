@@ -1,0 +1,77 @@
+---
+title: "Model"
+author: "JC Harrop"
+date: "December 7, 2015"
+output: html_document
+---
+
+Simple version of the model process for the assignment
+```{r}
+library(tidyverse)
+library(caret)
+# library(parallel)
+# library(doParallel)
+
+# cluster <- makeCluster(detectCores()-1)
+# registerDoParallel(cluster)
+```
+
+Lets just load the training data and have at it.  
+
+```{r}
+setwd("~/Documents/R work/DSS8-Project")
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+set.seed(749)  # not sure if I really need this.  Habit.
+```
+
+Inspection of the data indicated there was some room for cleaning and selecting a subset 
+of parameters.  We build a working set.
+
+```{r cleaning}
+working <- training[,-seq(1:7)]
+working[working==""] <- NA
+indexNA <- as.vector(sapply(working[,1:ncol(working)],
+                            function(x) {length(which(is.na(x))) < 1000}))
+working <- working[,indexNA]
+
+working <- working[working$gyros_dumbbell_x > (-50), ]
+working <- working[working$magnet_belt_z < (-125), ]
+working <- working[working$magnet_belt_x < (250), ]
+working <- working[working$yaw_belt < (100), ]
+working <- working[working$yaw_belt > (-100), ]
+working <- working[working$magnet_dumbbell_y > (-1000), ]
+
+working <- subset(working, 
+                   select=c(-magnet_forearm_z, -gyros_forearm_z, -magnet_arm_x, 
+                            -gyros_arm_y, -gyros_arm_z, -accel_belt_x, -gyros_belt_y, 
+                            -total_accel_belt, -roll_belt, -roll_dumbbell,
+                            -gyros_dumbbell_z, -gyros_dumbbell_x, -accel_belt_y, 
+                            -magnet_belt_x, -total_accel_arm, -magnet_arm_y, 
+                            -gyros_forearm_x, -gyros_forearm_y, -accel_forearm_x))
+
+summary(training$classe)
+```
+
+Although we tried various methods to split correct and flawed exercises, we will run
+all categories through the random forest algorithm rather than the two stage seperation.
+
+```{r model}
+# fitControl <- trainControl(method = "cv",
+#                            number = 10,
+#                            allowParallel = TRUE)
+
+#model1b <- train(classe ~ . , data=working, method="rf", prox=TRUE)
+model1b <- train(classe ~ . , data=working, method="gbm")
+predict(model1b, newdata=testing)
+working$predClass <- predict(model1b, newdata=working)
+confusionMatrix(working$predClass, working$classe)
+
+# stopCluster(cluster)
+# registerDoSEQ()
+```
+
+```{r test}
+#working$predClasse <- predict(model1b, newdata=testing)
+```
+
