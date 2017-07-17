@@ -5,16 +5,28 @@ date: '2017-07-16'
 output: html_document
 ---
 
+## Summary
+
+Motion senor data previously collected for studying weight lifting exercises was used 
+in the exercise in practical machine learning (Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. 2013, Qualitative Activity Recognition of Weight Lifting Exercises)
+The data included measurements for both correctly performed dumbbell curls (class A) and
+four common errors (classes B, C, D and E).  The current exercise was to train a model
+that could recognize what class of activity an instantaneous falls within.  Following
+data cleaning and feature select a subset of observations were held back for 
+CV/out-of-sample testing.  A number of of algorithms were tested using the caret package
+with the gbm (Generalized Boosted Regression Models) package providing a sufficiently
+accurate solution in reasonable good training time.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 ```
-Simple version of the model process for the assignment
-```{r, echo=FALSE}
-library(tidyverse)
+
+```{r, message=FALSE}
 library(caret)
 library(corrplot)
 library(rattle)
 library(rpart.plot)
+library(tidyverse)
 
 # library(parallel)
 # library(doParallel)
@@ -23,18 +35,23 @@ library(rpart.plot)
 # registerDoParallel(cluster)
 ```
 
-Lets just load the training data and have at it.  
+## Data Cleaning
 
 ```{r, echo=FALSE}
-setwd("~/Documents/R work/DSS8-Project")
+#setwd("~/Documents/R work/DSS8-Project")
 training <- read.csv("pml-training.csv")
 testing <- read.csv("pml-testing.csv")
 set.seed(749)  # not sure if I really need this. Habit.
-needToRunModel <- TRUE # save the model rather than rerun every time I edit Rmd!
+#needToRunModel <- TRUE # save the model rather than rerun every time I edit Rmd!
+needToRunModel <- FALSE # already got a model thanks, just doing other edits!
 ```
 
 Inspection of the data indicated there was some room for cleaning and selecting a subset 
-of parameters.  We build a working set.
+of parameters.  Some of the parameters were clearly not useful for building a predictive 
+model so these were removed.  Individual observations were also removed for range problems, 
+lack of signal, excessive NAs, etc.  Following this a number of EDA plots were reviewed to
+reduce the features used in the model.  A few plots of presented below as examples. The following code was used to clean the data, followed by a summary of the number of each 
+class of exercise still in the training data.
 
 ```{r cleaning}
 working <- training[,-seq(1:7)]
@@ -50,6 +67,29 @@ working <- working[working$yaw_belt < (100), ]
 working <- working[working$yaw_belt > (-100), ]
 working <- working[working$magnet_dumbbell_y > (-1000), ]
 
+summary(training$classe)
+```
+
+## EDA and Feature Selection
+
+A combination of scatter, box and density plots coloured by the "classe" parameter we
+examined for many of the motion sensor features.  This appears to be where the science of
+data science meets the art of feature selection.  A correlation plot was also done but the
+scatter plots were found to be the most useful in feature selection.  Box and density plots 
+also contributed to preliminary understanding of the training data. Two examples of scatter
+plots are presented below to illustrate this.  Both are considered fairly correlated but
+in the upper one the classes are much more mixed than in the lower where there is 
+significant clustering.  In fact, plots like the lower one are quite encouraging that a
+predictive model of exercise class is possible.  They also demonstrate how scatter 
+plots can assist in feature selection beyond correlation plots.
+
+```{r}
+ggplot(working, aes(x=magnet_arm_z, y=accel_arm_z)) + 
+    geom_point(aes(colour=classe), size=0.2, alpha=0.6)
+
+ggplot(working, aes(x=yaw_belt, y=accel_belt_z)) + 
+    geom_point(aes(colour=classe), size=0.2, alpha=0.6)
+
 working <- subset(working, 
                    select=c(-magnet_forearm_z, -gyros_forearm_z, -magnet_arm_x, 
                             -gyros_arm_y, -gyros_arm_z, -accel_belt_x, -gyros_belt_y, 
@@ -58,18 +98,12 @@ working <- subset(working,
                             -magnet_belt_x, -total_accel_arm, -magnet_arm_y, 
                             -gyros_forearm_x, -gyros_forearm_y, -accel_forearm_x))
 
-summary(training$classe)
+corrplot(cor(working[,seq(1,ncol(working)-1)]), method = "color", type="lower", 
+         order="hclust", tl.cex = 0.75, tl.col="black", tl.srt = 45)
 ```
 
-## EDA and Feature Selection
-
-```{r}
-ggplot(working, aes(x=magnet_dumbbell_x, y=magnet_dumbbell_y)) + 
-    geom_point(aes(colour=classe), size=0.2, alpha=0.6)
-```
-
-Now the data has be trimmed and filtered down to a working set we can seperate out a 
-testing set for cross validation.
+Now the data has be trimmed and filtered down to a working set we can separate out a 
+testing set for cross validation.  A 20% random subset is set aside.
 
 ```{r}
 inTrain <- createDataPartition(y=working$classe, p=0.8, list=FALSE)
@@ -79,10 +113,27 @@ myTesting <- working[-inTrain,]
 
 ## Modelling
 
-Although we tried various methods to split correct and flawed exercises, we will run
-all categories through the random forest algorithm rather than the two stage seperation.
+A range of models available from within the caret package were examined including glm, gbm,
+rpart and rf.  As configured, glm (general linear models) and rpart (r?? partitions) did
+not result in sufficiently accurate models to be useful in this exercise.  A method of
+interest was rf (random forests) but even with parallel processing support implemented on 
+an eight core machine, time and memory constraints made this method too expensive to use.
+The gbm (general boosting) method was chosen as the operating version since it took a
+reasonable amount of tie to complete and provided sufficient accuracy for the purposes of
+the project.
 
-```{r model}
+The time issues described above presented a serious challenge for cross validation (CV)
+choices. Although K-fold or random sub-sampling are different options, the fact that the 
+training data is ordered by observation class means that the unless the order of training
+data is randomized K-fold will not be useful.  However, it would appear that randomizing 
+and subsequent K-folding is not significantly different than random sub-sampling to begin
+with.  The time constraints of the assignment clearly rule out "leave one out" strategies.
+Wanting to be able to try a number of algorithms a primitive CV solution with lower time
+demand was selected.  A 20% split of the training data was randomly sub-sampled using the
+caret package and set aside for out of sample testing.  Given less tie constraint this
+area could be improved, but given the quite large training data it was thought to be a decent first pass.
+
+```{r model, results=FALSE}
 # fitControl <- trainControl(method = "cv",
 #                            number = 10,
 #                            allowParallel = TRUE)
@@ -96,9 +147,24 @@ if (needToRunModel) {
     load("model1b.RData")
 }
     
-    
+```
 
-predict(model1b, newdata=testing)
+## Models Result
+
+First, we will look at the model's predictive ability based on the data used for training.  
+This result (97.9% accuracy) is likely not the best possible result, it looks like it could be more than
+enough to meet the prediction requirements of the assignment.  
+
+```{r, message=FALSE}
+myTraining$predClass <- predict(model1b, newdata=myTraining)
+confusionMatrix(myTraining$predClass, myTraining$classe)
+```
+
+But this is the in-sample error so we need to check that over-fitting has not excessively 
+inflated the accuracy.  Of greater interest is the out-of-sample error.  To evaluate that 
+we will use the test data that was withheld from training the model.
+
+```{r model-result}
 myTesting$predClass <- predict(model1b, newdata=myTesting)
 confusionMatrix(myTesting$predClass, myTesting$classe)
 
@@ -106,13 +172,40 @@ confusionMatrix(myTesting$predClass, myTesting$classe)
 # registerDoSEQ()
 ```
 
-Now to get the official test results.
+This is less than the in-sample error as expected, but it is still a useful predictive 
+model (96.6% accuracy) for the purpose on hand.  Running and submitting the 20 observations for the quiz 
+returned 19/20 correct - which is consistent with the accuracy estimate.  (Do I get an extra mark for the correctly predicted error? ;-)
+
+The accuracy of B type flawed exercise is also lower than the other types.  Perhaps 
+further review of the data, and additional information on the nature of type-B flaws
+would enable this misclassification to be reduced.
 
 ```{r}
-predict(model1b, newdata=testing)
+#predict(model1b, newdata=testing)
 ```
 
+A characteristic of the prediction behaviour (also in the test behaviour) with no
+immediate explanation is why the majority of the misclassification is with the adjacent 
+class.  (Adjacent in the alphabetic sense.)  Without knowing more about the type of 
+flawed exercise that were being tested its not easy to see any mathematical or 
+statistical reason why the misclassifications should not be more random.  This is a 
+slight red flag and might be worth investigation on a larger study.
+
 ## Discussion
+
+Now that we have a confirmed, functional prediction model it is worth having a brief
+look at this model.  Two features (yaw_belt and pitch_forearm) dominate feature influence 
+with the next feature contributing approximately less than half each of they do.  It would be
+worth considering redoing the model removing some features based on their lack of
+contribution to the model.  Two possible places to make that cut are between the 15th and
+16th features where there is a drop from 1.76% to 0.75% and between the 22nd and 23rd  
+where the drop is from 0.60% to 0.34%.
+
+Regardless, there are useful clues in the model as to what movement characteristics are
+associated with the flawed exercises.  In conclusion, this assignment has many ways in which 
+further work could be directed.  Additional (more time expensive) tree based methods would
+be interesting to try,  More comprehensive CV methods would also be appropriate in further
+work given more time to allow models to run.
 
 ```{r}
 summary(model1b)
